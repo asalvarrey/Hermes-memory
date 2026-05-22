@@ -16,6 +16,7 @@
   <a href="#-características"><img src="https://img.shields.io/badge/features-8_E2E-brightgreen?style=flat-square" alt="Features"></a>
   <a href="#-instalación"><img src="https://img.shields.io/badge/install-2_pasos-success?style=flat-square" alt="Install"></a>
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
+  <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donar-☕_Cafecito-FFDD00?style=flat-square" alt="Cafecito"></a>
 </p>
 
 ---
@@ -239,6 +240,14 @@ print(f'Available: {p.is_available()}')
 Construido por [@asalvarrey](https://github.com/asalvarrey) y [Hermes Agent](https://hermes-agent.nousresearch.com).
 
 Inspirado por el ecosistema de plugins de Hermes — Honcho, Mem0, Hindsight y Supermemory mostraron el camino, Supabase puso los cimientos.
+
+---
+
+## ☕ Apoya el proyecto
+
+Si este plugin te sirve, invítame un cafecito — la renta de la cafetera no se paga sola 😂
+
+[![☕ Cafecito](https://img.shields.io/badge/Invitame_un_cafecito-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/asalvarrey)
 
 ---
 
