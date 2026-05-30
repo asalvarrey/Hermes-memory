@@ -13,11 +13,18 @@
 
 <p align="center">
   <a href="README.md"><img src="https://img.shields.io/badge/📖-English-blue?style=flat-square" alt="English"></a>
-  <a href="#-características"><img src="https://img.shields.io/badge/features-8_E2E-brightgreen?style=flat-square" alt="Features"></a>
+  <a href="#-características"><img src="https://img.shields.io/badge/features-9_E2E-brightgreen?style=flat-square" alt="Features"></a>
   <a href="#-instalación"><img src="https://img.shields.io/badge/install-2_pasos-success?style=flat-square" alt="Install"></a>
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donar-☕_Cafecito-FFDD00?style=flat-square" alt="Cafecito"></a>
 </p>
+
+---
+
+## 🔔 Novedades en v1.0.2
+
+- **Flush en cierre limpio** — `shutdown()` ahora fuerza el vaciado de cualquier sync pendiente hacia Supabase antes de `/new`, `/reset` o al salir del proceso.
+- **Sin pérdida por idle timeout** — las escrituras en cola se confirman antes, sin esperar a un cleanup tardío.
 
 ---
 
@@ -53,6 +60,7 @@ En lugar de archivos locales que desaparecen si la VM muere, la memoria de tu ag
 | 6 | 🔄 **Auto-migración** — tablas creadas al ejecutar `hermes memory setup` | ✅ |
 | 7 | 🔐 **Políticas RLS** — service-role para escritura, anon-key para lectura | ✅ |
 | 8 | ⏱️ **Triggers de actualización** auto-updated_at en todas las tablas | ✅ |
+| 9 | 🧹 **Flush en cierre limpio** — los sync pendientes se vacían en `/new` y `/reset` | ✅ |
 
 ---
 

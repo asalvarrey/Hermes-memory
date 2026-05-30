@@ -1,6 +1,6 @@
 name: supabase
 description: "Persistent memory for Hermes Agent using Supabase (PostgreSQL + pgvector)"
-version: 1.0.1
+version: 1.0.2
 author: "Antonov Salvarrey (@asalvarrey)"
 license: MIT
 hermes_versions: ">=2.0.0"

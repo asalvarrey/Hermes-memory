@@ -12,12 +12,19 @@
 </p>
 
 <p align="center">
-  <a href="#-features"><img src="https://img.shields.io/badge/features-8_E2E_blue?style=flat-square" alt="Features"></a>
+  <a href="#-features"><img src="https://img.shields.io/badge/features-9_E2E_blue?style=flat-square" alt="Features"></a>
   <a href="#-installation"><img src="https://img.shields.io/badge/install-2_steps-green?style=flat-square" alt="Install"></a>
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://hermes-agent.nousresearch.com"><img src="https://img.shields.io/badge/for-Hermes_Agent-orange?style=flat-square" alt="Hermes"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donate-☕_Buy_me_a_coffee-FFDD00?style=flat-square" alt="Buy me a coffee"></a>
 </p>
+
+---
+
+## 🔔 What’s new in v1.0.2
+
+- **Clean shutdown flush** — `shutdown()` now forces any pending syncs to flush to Supabase before `/new`, `/reset`, or process exit.
+- **No more idle-timeout loss** — queued memory writes are committed earlier instead of waiting for a later idle cleanup.
 
 ---
 
@@ -53,6 +60,7 @@ Instead of local files that disappear when your VM dies, your agent's memory liv
 | 6 | 🔄 **Auto-migration** — tables created on first `hermes memory setup` | ✅ |
 | 7 | 🔐 **RLS policies** — service-role gated, anon-key ready | ✅ |
 | 8 | ⏱️ **Auto-updated_at** triggers on all tables | ✅ |
+| 9 | 🧹 **Clean shutdown flush** — pending syncs are flushed on `/new` and `/reset` | ✅ |
 
 ---
 

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="hermes-supabase-memory",
-    version="1.0.1",
+    version="1.0.2",
     description="Supabase memory plugin for Hermes Agent",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
