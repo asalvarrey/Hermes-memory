@@ -783,23 +783,15 @@ class SupabaseMemoryProvider(MemoryProvider):
         self,
         messages: List[Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
-        """Call the OpenAI chat completions API via urllib to produce a structured
-        JSON summary of the session.
+        """Call Ollama /api/chat via urllib to produce a structured JSON summary.
 
-        Uses the same api_key_env as the embedder — no new dependencies beyond
-        what is already required for embeddings.
+        Uses the same summary_model configured in plugin.yaml.
         Returns None on any failure; caller falls back to basic summary.
         """
         if not self._enhanced_memory or not self._settings:
             return None
 
-        # -- Resolver API key (mismo env que el embedder) ---------------------
-        api_key_env = self._settings.embedding.api_key_env or "OPENAI_API_KEY"
-        api_key = self._get_env(api_key_env) or self._get_env("OPENAI_API_KEY")
-        if not api_key:
-            logger.debug(
-                "SupabaseMemory: enhanced_memory skipped — no API key (%s)", api_key_env
-            )
+        if not self._settings.enhanced_memory.enabled:
             return None
 
         # -- Construir transcript (últimos N mensajes) -------------------------
@@ -825,7 +817,7 @@ class SupabaseMemoryProvider(MemoryProvider):
         }
         fields = self._enhanced_memory.summary_fields
         schema_lines = [
-            f'  "{f}": <{field_hints.get(f, "list of strings")}>'
+            f'  "{f}": <{field_hints.get(f, "list of strings")}> '
             for f in fields
         ]
         prompt = (
@@ -836,22 +828,23 @@ class SupabaseMemoryProvider(MemoryProvider):
             f"CONVERSATION:\n{transcript}"
         )
 
-        # -- Llamada HTTP vía urllib (mismo patrón que OpenAIEmbedder) --------
-        endpoint = "https://api.openai.com/v1/chat/completions"
+        # -- Llamada HTTP vía urllib a Ollama ---------------------------------
+        endpoint = "https://ollama.lemuria.systems/api/chat"
         payload: Dict[str, Any] = {
             "model": self._enhanced_memory.summary_model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
-            "max_tokens": 512,
-            "response_format": {"type": "json_object"},
+            "stream": False,
+            "format": "json",
         }
         body = json.dumps(payload).encode("utf-8")
         request = Request(
             endpoint,
             data=body,
             headers={
-                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 HermesMemory/1.0",
             },
             method="POST",
         )
@@ -875,33 +868,32 @@ class SupabaseMemoryProvider(MemoryProvider):
             return None
         except json.JSONDecodeError as exc:
             logger.warning(
-                "SupabaseMemory: enhanced_memory invalid JSON response — %s", exc
+                "SupabaseMemory: enhanced_memory invalid JSON from backend — %s", exc
             )
             return None
         except Exception as exc:
             logger.warning("SupabaseMemory: enhanced_memory failed — %s", exc)
             return None
 
-        # -- Parsear y validar la respuesta -----------------------------------
-        try:
-            content = result["choices"][0]["message"]["content"]
-            structured = json.loads(content)
-            if not isinstance(structured, dict):
-                logger.warning("SupabaseMemory: enhanced_memory response is not a dict")
-                return None
-        except (KeyError, IndexError, json.JSONDecodeError) as exc:
-            logger.warning("SupabaseMemory: enhanced_memory parse failed — %s", exc)
+        message = result.get("message")
+        if not isinstance(message, dict):
+            logger.warning("SupabaseMemory: enhanced_memory missing message in response")
             return None
 
-        # -- Loguear uso de tokens si disponible ------------------------------
-        usage = result.get("usage", {})
-        if usage:
-            logger.info(
-                "SupabaseMemory: enhanced_memory — %d prompt + %d completion tokens (session %s)",
-                usage.get("prompt_tokens", 0),
-                usage.get("completion_tokens", 0),
-                self._session_id,
-            )
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            logger.warning("SupabaseMemory: enhanced_memory empty content in response")
+            return None
+
+        try:
+            structured = json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning("SupabaseMemory: enhanced_memory content is not valid JSON")
+            return None
+
+        if not isinstance(structured, dict):
+            logger.warning("SupabaseMemory: enhanced_memory JSON root is not an object")
+            return None
 
         return structured
 

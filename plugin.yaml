@@ -1,6 +1,6 @@
 name: supabase
 description: "Persistent memory for Hermes Agent using Supabase (PostgreSQL + pgvector)"
-version: 1.1.1
+version: 1.2.1
 author: "Antonov Salvarrey (@asalvarrey)"
 license: MIT
 hermes_versions: ">=2.0.0"
@@ -12,7 +12,6 @@ env_vars:
   - SUPABASE_URL
   - SUPABASE_SERVICE_KEY
   - SUPABASE_ANON_KEY
-  - OPENAI_API_KEY
 tags:
   - memory
   - supabase
@@ -22,12 +21,11 @@ tags:
   - cloud
 embedding:
   enabled: true
-  provider: openai          # day one: openai
-  # next: voyageai          # future support for Anthropic route
-  model: text-embedding-3-small
-  dimension: 1536
-  api_key_env: OPENAI_API_KEY
-  base_url: null
+  provider: ollama
+  model: nomic-embed-text:latest
+  dimension: 768
+  api_key_env: null
+  base_url: https://ollama.lemuria.systems
   timeout_s: 30
   batch_size: 16
   strict_dimension: true
@@ -37,3 +35,13 @@ retrieval:
   vector_min_similarity: 0.75
   keyword_top_k: 20
   fallback_to_ilike: true
+
+enhanced_memory:
+  enabled: true                  # opt-in explícito — consume tokens del LLM
+  max_messages_to_summarize: 20
+  summary_model: qwen2.5:14b
+  summary_fields:
+    - topics
+    - decisions
+    - user_prefs
+    - key_context
