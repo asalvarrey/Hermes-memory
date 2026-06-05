@@ -14,13 +14,20 @@
 <p align="center">
   <a href="#-features"><img src="https://img.shields.io/badge/features-9_E2E_blue?style=flat-square" alt="Features"></a>
   <a href="#-installation"><img src="https://img.shields.io/badge/install-2_steps-green?style=flat-square" alt="Install"></a>
-  <img src="https://img.shields.io/badge/version-v1.1.0-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.1.1-orange?style=flat-square" alt="Version">
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://hermes-agent.nousresearch.com"><img src="https://img.shields.io/badge/for-Hermes_Agent-orange?style=flat-square" alt="Hermes"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donate-☕_Buy_me_a_coffee-FFDD00?style=flat-square" alt="Buy me a coffee"></a>
 </p>
 
 ---
+
+## 🔔 What’s new in v1.1.1
+
+- **Patch release, same shape** — no schema or workflow changes; this bump is about stabilizing the already-merged Supabase memory path.
+- **Safer persistence writes** — profile/session sync now uses explicit conflict targets so the plugin can write cleanly in live Supabase projects.
+- **Loader resilience** — the plugin stays usable in stripped Hermes environments thanks to vendored dependencies and a minimal YAML fallback.
+- **Smoke-tested** — the release was verified with real read/write calls against Supabase before this note was added.
 
 ## 🔔 What’s new in v1.1.0
 
