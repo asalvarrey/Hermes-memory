@@ -17,14 +17,25 @@
   <a href="#-instalación"><img src="https://img.shields.io/badge/install-2_pasos-success?style=flat-square" alt="Install"></a>
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donar-☕_Cafecito-FFDD00?style=flat-square" alt="Cafecito"></a>
+  <img src="https://img.shields.io/badge/version-v1.1.0-orange?style=flat-square" alt="Version">
 </p>
 
 ---
 
-## 🔔 Novedades en v1.0.2
+## 🔔 Novedades en v1.1.0
 
-- **Flush en cierre limpio** — `shutdown()` ahora fuerza el vaciado de cualquier sync pendiente hacia Supabase antes de `/new`, `/reset` o al salir del proceso.
-- **Sin pérdida por idle timeout** — las escrituras en cola se confirman antes, sin esperar a un cleanup tardío.
+- **Memoria vectorial, por fin** — `sync_turn()` ahora escribe embeddings cuando está configurado, y `prefetch()` / `supabase_search` pueden usar `match_hermes_memory` para recuperación semántica.
+- **Embeddings agnósticos del proveedor** — el plugin trae una abstracción local `EmbedProvider`, con OpenAI en día uno y VoyageAI documentado como el siguiente soporte.
+- **Fallback seguro** — si fallan los embeddings, la RPC o el backend, el plugin cae a `ilike` y luego a la caché SQLite local.
+- **Nota de versión** — este README ya refleja el salto de versión para la rama de embeddings / búsqueda vectorial.
+
+---
+
+### 🏷️ Tags
+
+`memory` · `supabase` · `pgvector` · `embeddings` · `semantic-search` · `fallback` · `hermes-agent`
+
+> **Nota de diseño:** primero vector, luego keyword, y siempre con salida segura offline.
 
 ---
 
@@ -53,14 +64,15 @@ En lugar de archivos locales que desaparecen si la VM muere, la memoria de tu ag
 | # | Característica | Estado |
 |---|---|---|
 | 1 | 🗄️ **Memoria persistente** entre sesiones — sobrevive reseteos de VM | ✅ |
-| 2 | 🔍 **Búsqueda semántica** vía PostgreSQL `ilike` (pgvector próximamente) | ✅ |
+| 2 | 🔍 **Búsqueda híbrida** — vector search con pgvector + fallback `ilike` | ✅ |
 | 3 | 👤 **Perfiles de usuario** con almacenamiento JSONB | ✅ |
 | 4 | 📋 **Seguimiento de sesiones** con auto-resumen | ✅ |
 | 5 | 🧩 **Sincronización de skills** entre instancias de Hermes | ✅ |
 | 6 | 🔄 **Auto-migración** — tablas creadas al ejecutar `hermes memory setup` | ✅ |
 | 7 | 🔐 **Políticas RLS** — service-role para escritura, anon-key para lectura | ✅ |
 | 8 | ⏱️ **Triggers de actualización** auto-updated_at en todas las tablas | ✅ |
-| 9 | 🧹 **Flush en cierre limpio** — los sync pendientes se vacían en `/new` y `/reset` | ✅ |
+| 9 | 🧠 **Pipeline de embeddings** — `EmbedProvider` agnóstico con config local | ✅ |
+| 10 | 🧹 **Flush en cierre limpio** — los sync pendientes se vacían en `/new` y `/reset` | ✅ |
 
 ---
 
@@ -77,8 +89,12 @@ En lugar de archivos locales que desaparecen si la VM muere, la memoria de tu ag
 Copia y ejecuta el SQL de migración en tu **Supabase Dashboard → SQL Editor**:
 
 ```sql
--- Copia de: migrations/001_supabase_memory_init.sql
+-- Aplica primero la migración de esquema:
+--   migrations/001_supabase_memory_init.sql
+-- Luego aplica la RPC:
+--   migrations/002_match_hermes_memory.sql
 -- O ejecuta con el CLI de Supabase:
+-- supabase db push
 supabase db query --linked --file migrations/001_supabase_memory_init.sql
 ```
 
@@ -142,6 +158,7 @@ hermes memory setup    # Configuración interactiva
 │  │    SupabaseMemoryProvider (este plugin)    │  │
 │  │         ┌──────────────────────┐          │  │
 │  │         │   supabase-py SDK    │          │  │
+│  │         │   + EmbedProvider     │          │  │
 │  │         └──────────┬───────────┘          │  │
 │  └────────────────────┼──────────────────────┘  │
 └───────────────────────┼─────────────────────────┘
@@ -176,13 +193,15 @@ Usuario: "Hola, soy Antonov"
   ▼
 ┌──────────────────────────────────────────────┐
 │ 1. prefetch(query)                            │
-│    → Busca en la memoria pasada contexto      │
+│    → Prueba búsqueda vectorial primero        │
+│    → Luego cae a `ilike` + caché local        │
 │    → Inyecta en el prompt del sistema         │
 ├──────────────────────────────────────────────┤
 │ 2. El LLM genera una respuesta                │
 ├──────────────────────────────────────────────┤
 │ 3. sync_turn(msg_usuario, msg_asistente)      │
 │    → Guarda ambos en hermes_memory            │
+│    → Escribe embeddings cuando aplica         │
 │    → Actualiza hermes_sessions                │
 └──────────────────────────────────────────────┘
 ```
@@ -191,7 +210,7 @@ Usuario: "Hola, soy Antonov"
 
 | Herramienta | Descripción |
 |---|---|
-| `supabase_search` | Busca entradas de memoria por palabra clave |
+| `supabase_search` | Busca por palabra clave o similitud vectorial |
 | `supabase_profile` | Lee o actualiza preferencias del usuario |
 
 ---
@@ -234,12 +253,12 @@ print(f'Available: {p.is_available()}')
 
 ## 🗺️ Hoja de Ruta
 
-- [ ] **Búsqueda semántica pgvector** — embedding de texto con OpenAI/Nous y búsqueda por similitud vectorial
 - [ ] **Asistente `hermes memory setup`** — configuración interactiva con auto-migración
 - [ ] **Soporte multi-perfil** — memoria aislada por perfil de Hermes
 - [ ] **Auto-resumen de sesiones** — resúmenes generados por LLM
 - [ ] **Poda programada de memoria** — TTL para entradas viejas
 - [ ] **Demonio de sincronización de skills** — mirror automático entre instancias
+- [ ] **Soporte VoyageAI** — siguiente provider para la ruta Anthropic
 
 ---
 

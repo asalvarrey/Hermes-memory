@@ -7,10 +7,12 @@ hermes_versions: ">=2.0.0"
 python_requires: ">=3.10"
 install_deps:
   - supabase>=2.0.0
+  - pyyaml>=6.0
 env_vars:
   - SUPABASE_URL
   - SUPABASE_SERVICE_KEY
   - SUPABASE_ANON_KEY
+  - OPENAI_API_KEY
 tags:
   - memory
   - supabase
@@ -18,3 +20,20 @@ tags:
   - vector
   - persistent
   - cloud
+embedding:
+  enabled: true
+  provider: openai          # day one: openai
+  # next: voyageai          # future support for Anthropic route
+  model: text-embedding-3-small
+  dimension: 1536
+  api_key_env: OPENAI_API_KEY
+  base_url: null
+  timeout_s: 30
+  batch_size: 16
+  strict_dimension: true
+retrieval:
+  vector_enabled: true
+  vector_top_k: 10
+  vector_min_similarity: 0.75
+  keyword_top_k: 20
+  fallback_to_ilike: true

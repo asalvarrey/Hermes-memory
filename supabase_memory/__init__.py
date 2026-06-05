@@ -44,14 +44,26 @@ from typing import Any, Dict, List, Optional, Tuple
 from agent.memory_provider import MemoryProvider
 from tools.registry import tool_error
 
+from .embeddings import (
+    EmbedBackendError,
+    EmbedConfigError,
+    EmbedDimensionError,
+    EmbedProvider,
+    EmbedProviderError,
+    EmbedProviderFactory,
+    EmbedUnavailableError,
+    NullEmbedder,
+)
+from .settings import PluginSettings, load_plugin_settings
+
 logger = logging.getLogger(__name__)
 
 try:
-    from supabase import create_client, Client
+    from supabase import create_client  # type: ignore[reportMissingImports]
     HAS_SUPABASE = True
 except ImportError:
+    create_client = None  # type: ignore[assignment]
     HAS_SUPABASE = False
-    Client = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -369,13 +381,22 @@ class SupabaseMemoryProvider(MemoryProvider):
     """
 
     def __init__(self):
-        self._client: Optional[Client] = None
+        self._client: Optional[Any] = None
         self._url: str = ""
         self._key: str = ""
         self._session_id: str = ""
         self._cache: Optional[LocalCache] = None
         self._online: bool = False
         self._hermes_home: str = ""
+
+        # Plugin-local settings and embedding configuration.
+        self._settings: Optional[PluginSettings] = None
+        self._embedder: EmbedProvider = NullEmbedder()
+        self._vector_enabled: bool = False
+        self._vector_top_k: int = 10
+        self._vector_min_similarity: float = 0.75
+        self._keyword_top_k: int = 20
+        self._fallback_to_ilike: bool = True
 
     # -- Properties ----------------------------------------------------------
 
@@ -395,6 +416,31 @@ class SupabaseMemoryProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         """Connect to Supabase, init local cache, flush pending syncs."""
+        # Load plugin-local settings once per provider instance.
+        self._settings = load_plugin_settings()
+
+        # Cache retrieval knobs locally for fast access on the hot path.
+        self._vector_enabled = bool(self._settings.retrieval.vector_enabled)
+        self._vector_top_k = int(self._settings.retrieval.vector_top_k)
+        self._vector_min_similarity = float(self._settings.retrieval.vector_min_similarity)
+        self._keyword_top_k = int(self._settings.retrieval.keyword_top_k)
+        self._fallback_to_ilike = bool(self._settings.retrieval.fallback_to_ilike)
+
+        # Build the embedder from plugin.yaml. If config is missing/invalid, fall
+        # back to the safe NullEmbedder so keyword search remains the default path.
+        try:
+            self._embedder = EmbedProviderFactory.create(self._settings.raw)
+        except EmbedConfigError as exc:
+            logger.warning(
+                "SupabaseMemory: invalid embedding config; using NullEmbedder: %s",
+                exc,
+            )
+            self._embedder = NullEmbedder()
+
+        # If the provider is not usable, keep vector search disabled and rely on ilike.
+        if isinstance(self._embedder, NullEmbedder):
+            self._vector_enabled = False
+
         if not self._url or not self._key:
             url = self._get_env("SUPABASE_URL") or ""
             key = self._get_env("SUPABASE_SERVICE_KEY") or self._get_env("SUPABASE_ANON_KEY") or ""
@@ -409,9 +455,12 @@ class SupabaseMemoryProvider(MemoryProvider):
 
         # Try connecting to Supabase
         try:
-            self._client = create_client(self._url, self._key)
+            if create_client is None:
+                raise RuntimeError("SupabaseMemory: supabase package is not installed")
+            client = create_client(self._url, self._key)
             # Quick ping
-            self._client.table("hermes_memory").select("id").limit(1).execute()
+            client.table("hermes_memory").select("id").limit(1).execute()
+            self._client = client
             self._online = True
             logger.info("SupabaseMemory: connected ✅ (session %s)", session_id)
             # Flush any pending syncs from previous offline periods
@@ -423,6 +472,13 @@ class SupabaseMemoryProvider(MemoryProvider):
 
         self._cache.set_metadata("last_initialize", str(time.time()))
         self._cache.set_metadata("online", str(self._online))
+
+        logger.info(
+            "SupabaseMemory: embeddings=%s vector_enabled=%s fallback_to_ilike=%s",
+            getattr(self._embedder, "name", "unknown"),
+            self._vector_enabled,
+            self._fallback_to_ilike,
+        )
 
     def system_prompt_block(self) -> str:
         """Return instructions about Supabase memory for the system prompt."""
@@ -440,11 +496,62 @@ class SupabaseMemoryProvider(MemoryProvider):
         )
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Retrieve relevant memory for the upcoming turn. Falls back to local."""
+        """Retrieve relevant memory for the upcoming turn.
+
+        Resolution order:
+        1) Vector search via match_hermes_memory when embeddings are available
+        2) Keyword search via Supabase ilike
+        3) Local SQLite cache fallback
+        """
         if not self._cache or not query:
             return ""
 
-        # Try Supabase first
+        sid = session_id or self._session_id
+
+        def _format_supabase_rows(rows: List[Dict[str, Any]], *, prefix: str = "") -> str:
+            lines: List[str] = []
+            for entry in rows:
+                ts = str(entry.get("created_at", ""))[:19]
+                content = str(entry.get("content", ""))[:300]
+                similarity = entry.get("similarity")
+                if isinstance(similarity, (int, float)):
+                    lines.append(f"{prefix}[{ts} | score={similarity:.3f}] {content}")
+                else:
+                    lines.append(f"{prefix}[{ts}] {content}")
+            return "\n".join(lines)
+
+        # ------------------------------------------------------------------
+        # 1) Semantic retrieval via RPC if enabled and embedders are usable
+        # ------------------------------------------------------------------
+        if (
+            self._online
+            and self._client
+            and self._vector_enabled
+            and not isinstance(self._embedder, NullEmbedder)
+        ):
+            try:
+                query_vectors = self._embedder.embed([query], kind="query")
+                if query_vectors:
+                    query_vector = query_vectors[0]
+                    rpc_args: Dict[str, Any] = {
+                        "query_embedding": query_vector,
+                        "match_threshold": self._vector_min_similarity,
+                        "match_count": self._vector_top_k,
+                        "filter_user_id": "default",
+                        "filter_session_id": sid or None,
+                    }
+
+                    result = self._client.rpc("match_hermes_memory", rpc_args).execute()
+                    if result.data:
+                        return _format_supabase_rows(result.data)
+            except EmbedProviderError as exc:
+                logger.info("SupabaseMemory: vector prefetch unavailable, falling back to keyword search: %s", exc)
+            except Exception as exc:
+                logger.warning("SupabaseMemory: vector prefetch failed, falling back to keyword search: %s", exc)
+
+        # ------------------------------------------------------------------
+        # 2) Keyword fallback in Supabase
+        # ------------------------------------------------------------------
         if self._online and self._client:
             try:
                 result = (
@@ -452,30 +559,27 @@ class SupabaseMemoryProvider(MemoryProvider):
                     .select("content, metadata, created_at")
                     .ilike("content", f"%{query}%")
                     .order("created_at", desc=True)
-                    .limit(5)
+                    .limit(self._keyword_top_k)
                     .execute()
                 )
                 if result.data:
-                    lines = []
-                    for entry in result.data:
-                        ts = entry.get("created_at", "")[:19]
-                        content = entry.get("content", "")[:300]
-                        lines.append(f"[{ts}] {content}")
-                    return "\n".join(lines)
+                    return _format_supabase_rows(result.data, prefix="")
             except Exception:
                 self._online = False
                 logger.info("SupabaseMemory: degraded to offline during prefetch")
 
-        # Fall back to local cache
+        # ------------------------------------------------------------------
+        # 3) Local SQLite fallback
+        # ------------------------------------------------------------------
         try:
-            results = self._cache.search_local(query, limit=5)
+            results = self._cache.search_local(query, limit=self._keyword_top_k)
             if results:
-                lines = []
+                lines: List[str] = []
                 for entry in results:
                     ts = entry.get("timestamp", "")
                     if isinstance(ts, (int, float)):
                         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
-                    content = entry.get("content", "")[:300]
+                    content = str(entry.get("content", ""))[:300]
                     lines.append(f"[local:{ts}] {content}")
                 return "\n".join(lines)
         except Exception as e:
@@ -483,9 +587,48 @@ class SupabaseMemoryProvider(MemoryProvider):
 
         return ""
 
-    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
-        """Persist a turn. Always writes locally; tries Supabase if online."""
+    def sync_turn(
+        self,
+        user_content: str,
+        assistant_content: str,
+        *,
+        session_id: str = "",
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Persist a turn.
+
+        Always writes locally. If Supabase is online, also writes to Supabase with
+        embeddings when available. If embedding generation or Supabase insert fails,
+        the turn is queued for later sync and the provider degrades safely.
+        """
         sid = session_id or self._session_id
+
+        def _embedding_or_none(text: str) -> Optional[List[float]]:
+            if not self._vector_enabled or isinstance(self._embedder, NullEmbedder):
+                return None
+            try:
+                vectors = self._embedder.embed([text], kind="document")
+                if not vectors:
+                    return None
+                return vectors[0]
+            except EmbedProviderError as exc:
+                logger.warning("SupabaseMemory: embedding failed, falling back to non-vector insert: %s", exc)
+                return None
+            except Exception as exc:
+                logger.warning("SupabaseMemory: embedding backend error, falling back to non-vector insert: %s", exc)
+                return None
+
+        def _supabase_payload(role: str, content: str) -> Dict[str, Any]:
+            payload: Dict[str, Any] = {
+                "user_id": "default",
+                "session_id": sid,
+                "content": content,
+                "metadata": json.dumps({"role": role}),
+            }
+            embedding = _embedding_or_none(content)
+            if embedding is not None:
+                payload["embedding"] = embedding
+            return payload
 
         # Always write to local cache first
         if self._cache:
@@ -494,18 +637,8 @@ class SupabaseMemoryProvider(MemoryProvider):
         # Also write to Supabase if online
         if self._online and self._client:
             try:
-                self._client.table("hermes_memory").insert({
-                    "user_id": "default",
-                    "session_id": sid,
-                    "content": user_content,
-                    "metadata": json.dumps({"role": "user"}),
-                }).execute()
-                self._client.table("hermes_memory").insert({
-                    "user_id": "default",
-                    "session_id": sid,
-                    "content": assistant_content,
-                    "metadata": json.dumps({"role": "assistant"}),
-                }).execute()
+                self._client.table("hermes_memory").insert(_supabase_payload("user", user_content)).execute()
+                self._client.table("hermes_memory").insert(_supabase_payload("assistant", assistant_content)).execute()
             except Exception as e:
                 self._online = False
                 logger.warning("SupabaseMemory: degraded to offline (sync_turn): %s", e)
@@ -568,14 +701,92 @@ class SupabaseMemoryProvider(MemoryProvider):
     # -- Tool handlers -------------------------------------------------------
 
     def _handle_search(self, args: Dict[str, Any]) -> str:
-        """Search memory — try Supabase, fall back to local cache."""
-        query = args.get("query", "")
+        """Search memory with vector-first retrieval and keyword fallback."""
+        query = str(args.get("query", "")).strip()
         limit = min(int(args.get("limit", 5)), 20)
 
         if not query:
             return json.dumps({"results": [], "message": "No query provided", "source": "none"})
 
-        # Try Supabase
+        def _format_rows(rows: List[Dict[str, Any]], source: str) -> str:
+            results: List[Dict[str, Any]] = []
+            for entry in rows:
+                content = str(entry.get("content", ""))[:500]
+                metadata = entry.get("metadata", {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except Exception:
+                        pass
+                result_item: Dict[str, Any] = {
+                    "content": content,
+                    "metadata": metadata if isinstance(metadata, dict) else {},
+                    "timestamp": entry.get("created_at", entry.get("timestamp", "")),
+                }
+                if "similarity" in entry and isinstance(entry["similarity"], (int, float)):
+                    result_item["similarity"] = float(entry["similarity"])
+                results.append(result_item)
+
+            payload: Dict[str, Any] = {
+                "results": results,
+                "count": len(results),
+                "query": query,
+                "source": source,
+            }
+            if source == "local_cache" and not self._online:
+                payload["note"] = "Supabase was unreachable — showing cached data"
+            return json.dumps(payload)
+
+        # ------------------------------------------------------------------
+        # 1) Vector search via RPC if enabled and embeddings are available
+        # ------------------------------------------------------------------
+        if (
+            self._online
+            and self._client
+            and self._vector_enabled
+            and not isinstance(self._embedder, NullEmbedder)
+        ):
+            try:
+                query_vectors = self._embedder.embed([query], kind="query")
+                if query_vectors:
+                    query_vector = query_vectors[0]
+                    rpc_args: Dict[str, Any] = {
+                        "query_embedding": query_vector,
+                        "match_threshold": self._vector_min_similarity,
+                        "match_count": limit,
+                        "filter_user_id": "default",
+                        "filter_session_id": None,
+                    }
+                    result = self._client.rpc("match_hermes_memory", rpc_args).execute()
+                    if result.data:
+                        return json.dumps({
+                            "results": [
+                                {
+                                    "content": str(entry.get("content", ""))[:500],
+                                    "metadata": entry.get("metadata", {}) if isinstance(entry.get("metadata", {}), dict) else {},
+                                    "timestamp": entry.get("created_at", ""),
+                                    "similarity": float(entry.get("similarity", 0.0)) if entry.get("similarity") is not None else 0.0,
+                                }
+                                for entry in result.data
+                            ],
+                            "count": len(result.data),
+                            "query": query,
+                            "source": "supabase_vector",
+                        })
+            except EmbedProviderError as exc:
+                logger.info(
+                    "SupabaseMemory: vector search unavailable, falling back to keyword search: %s",
+                    exc,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "SupabaseMemory: vector search failed, falling back to keyword search: %s",
+                    exc,
+                )
+
+        # ------------------------------------------------------------------
+        # 2) Keyword search in Supabase
+        # ------------------------------------------------------------------
         if self._online and self._client:
             try:
                 result = (
@@ -586,24 +797,15 @@ class SupabaseMemoryProvider(MemoryProvider):
                     .order("created_at", desc=True)
                     .execute()
                 )
-                results = []
-                for entry in result.data:
-                    results.append({
-                        "content": entry["content"][:500],
-                        "metadata": entry.get("metadata", {}),
-                        "timestamp": entry.get("created_at", ""),
-                    })
-                return json.dumps({
-                    "results": results,
-                    "count": len(results),
-                    "query": query,
-                    "source": "supabase" if results else "no_results",
-                })
+                rows = result.data or []
+                return _format_rows(rows, "supabase")
             except Exception as e:
                 self._online = False
-                logger.info("SupabaseMemory: degraded during search")
+                logger.info("SupabaseMemory: degraded during search: %s", e)
 
-        # Fall back to local cache
+        # ------------------------------------------------------------------
+        # 3) Local cache fallback
+        # ------------------------------------------------------------------
         if self._cache:
             try:
                 results = self._cache.search_local(query, limit)
@@ -612,7 +814,7 @@ class SupabaseMemoryProvider(MemoryProvider):
                     "count": len(results),
                     "query": query,
                     "source": "local_cache",
-                    "note": "Supabase was unreachable — showing cached data" if not self._online else "",
+                    "note": "Cached version — may be stale" if not self._online else "",
                 })
             except Exception as e:
                 return tool_error(f"Search failed (local): {e}")
@@ -685,28 +887,192 @@ class SupabaseMemoryProvider(MemoryProvider):
 
     def _handle_status(self, args: Dict[str, Any]) -> str:
         """Report connection status, pending syncs, and cache stats."""
-        pending_syncs = []
+        pending_syncs: List[Dict[str, Any]] = []
         if self._cache:
             pending_syncs = self._cache.get_pending_syncs()
 
+        embedder_name = getattr(self._embedder, "name", "unknown")
+        embedder_model = getattr(self._embedder, "model", None)
+        embedder_dimension = getattr(self._embedder, "dimension", None)
+
         return json.dumps({
             "online": self._online,
-            "pending_syncs": len(pending_syncs),
             "source": "supabase_online" if self._online else "local_cache",
             "status": "🟢 All systems go" if self._online
                       else f"🟡 Offline — {len(pending_syncs)} pending syncs in queue",
+            "pending_syncs": len(pending_syncs),
             "details": {
                 "supabase_connected": self._online,
                 "local_cache_available": self._cache is not None,
                 "pending_sync_count": len(pending_syncs),
                 "hermes_home": self._hermes_home,
+                "session_id": self._session_id,
+                "vector_enabled": self._vector_enabled,
+                "vector_top_k": self._vector_top_k,
+                "vector_min_similarity": self._vector_min_similarity,
+                "keyword_top_k": self._keyword_top_k,
+                "fallback_to_ilike": self._fallback_to_ilike,
+                "embedding": {
+                    "enabled": self._vector_enabled and not isinstance(self._embedder, NullEmbedder),
+                    "provider": embedder_name,
+                    "model": embedder_model,
+                    "dimension": embedder_dimension,
+                },
             },
         })
+
+    def _is_vector_search_ready(self) -> bool:
+        """Return True when vector search can be attempted safely."""
+        return bool(
+            self._online
+            and self._client
+            and self._vector_enabled
+            and not isinstance(self._embedder, NullEmbedder)
+        )
+
+    def _embed_texts_safe(
+        self,
+        texts: List[str],
+        *,
+        kind: str = "document",
+    ) -> List[List[float]]:
+        """Embed texts safely, returning [] on any soft failure.
+
+        This helper never raises on provider failures; it only returns an empty list
+        and logs the problem so callers can fall back to keyword search.
+        """
+        if not texts or not self._is_vector_search_ready():
+            return []
+
+        try:
+            vectors = self._embedder.embed(texts, kind=kind)  # type: ignore[arg-type]
+            return vectors
+        except EmbedProviderError as exc:
+            logger.info("SupabaseMemory: embedding unavailable, falling back to keyword search: %s", exc)
+            return []
+        except Exception as exc:
+            logger.warning("SupabaseMemory: embedding failed, falling back to keyword search: %s", exc)
+            return []
+
+    def _vector_search(self, query: str, *, session_id: str = "", limit: int = 5) -> List[Dict[str, Any]]:
+        """Run vector search through the SQL RPC and normalize rows."""
+        if not query or not self._is_vector_search_ready():
+            return []
+
+        query_vectors = self._embed_texts_safe([query], kind="query")
+        if not query_vectors:
+            return []
+
+        rpc_args: Dict[str, Any] = {
+            "query_embedding": query_vectors[0],
+            "match_threshold": self._vector_min_similarity,
+            "match_count": limit,
+            "filter_user_id": "default",
+            "filter_session_id": session_id or None,
+        }
+
+        result = self._client.rpc("match_hermes_memory", rpc_args).execute()  # type: ignore[union-attr]
+        rows = result.data or []
+        normalized: List[Dict[str, Any]] = []
+
+        for entry in rows:
+            metadata = entry.get("metadata", {})
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except Exception:
+                    metadata = {}
+
+            normalized.append({
+                "id": entry.get("id"),
+                "user_id": entry.get("user_id", "default"),
+                "session_id": entry.get("session_id", session_id),
+                "content": str(entry.get("content", ""))[:500],
+                "metadata": metadata if isinstance(metadata, dict) else {},
+                "timestamp": entry.get("created_at", ""),
+                "similarity": float(entry.get("similarity", 0.0)) if entry.get("similarity") is not None else 0.0,
+                "source": "supabase_vector",
+            })
+
+        return normalized
+
+    def _keyword_search(self, query: str, *, limit: int = 5) -> List[Dict[str, Any]]:
+        """Run keyword search against Supabase and normalize rows."""
+        if not query or not self._online or not self._client:
+            return []
+
+        try:
+            result = (
+                self._client.table("hermes_memory")
+                .select("id, user_id, session_id, content, metadata, created_at")
+                .ilike("content", f"%{query}%")
+                .limit(limit)
+                .order("created_at", desc=True)
+                .execute()
+            )
+
+            rows = result.data or []
+            normalized: List[Dict[str, Any]] = []
+            for entry in rows:
+                metadata = entry.get("metadata", {})
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except Exception:
+                        metadata = {}
+
+                normalized.append({
+                    "id": entry.get("id"),
+                    "user_id": entry.get("user_id", "default"),
+                    "session_id": entry.get("session_id", ""),
+                    "content": str(entry.get("content", ""))[:500],
+                    "metadata": metadata if isinstance(metadata, dict) else {},
+                    "timestamp": entry.get("created_at", ""),
+                    "source": "supabase_keyword",
+                })
+
+            return normalized
+        except Exception as exc:
+            self._online = False
+            logger.info("SupabaseMemory: keyword search failed, switching to local cache: %s", exc)
+            return []
+
+    def _merge_search_results(
+        self,
+        vector_results: List[Dict[str, Any]],
+        keyword_results: List[Dict[str, Any]],
+        *,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """Merge vector + keyword results, de-duplicating and preserving ranking."""
+        merged: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def _key(entry: Dict[str, Any]) -> str:
+            entry_id = entry.get("id")
+            if entry_id:
+                return f"id:{entry_id}"
+            return f"content:{entry.get('content', '')}"
+
+        for entry in vector_results + keyword_results:
+            key = _key(entry)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(entry)
+            if len(merged) >= limit:
+                break
+
+        return merged
 
     # -- Sync queue -----------------------------------------------------------
 
     def _flush_pending_syncs(self) -> None:
-        """Flush all pending sync operations to Supabase."""
+        """Flush all pending sync operations to Supabase.
+
+        TODO: implement max_retries limit (e.g. 5) and dead-letter queue for
+        exhausted syncs.
+        """
         if not self._cache or not self._client or not self._online:
             return
 
@@ -716,30 +1082,66 @@ class SupabaseMemoryProvider(MemoryProvider):
 
         logger.info("SupabaseMemory: flushing %d pending syncs...", len(syncs))
         flushed = 0
+
+        def _maybe_embed(text: str) -> Optional[List[float]]:
+            if not self._vector_enabled or isinstance(self._embedder, NullEmbedder):
+                return None
+            try:
+                vectors = self._embedder.embed([text], kind="document")
+                if vectors:
+                    return vectors[0]
+            except EmbedProviderError as exc:
+                logger.warning("SupabaseMemory: pending sync embedding unavailable: %s", exc)
+            except Exception as exc:
+                logger.warning("SupabaseMemory: pending sync embedding failed: %s", exc)
+            return None
+
         for sync in syncs:
             try:
                 op = sync["operation"]
                 payload = sync["payload"]
 
                 if op == "insert_turn":
-                    self._client.table("hermes_memory").insert({
+                    user_content = payload.get("user_content", "")
+                    assistant_content = payload.get("assistant_content", "")
+                    session_id = payload.get("session_id", "")
+
+                    user_row: Dict[str, Any] = {
                         "user_id": "default",
-                        "session_id": payload.get("session_id", ""),
-                        "content": payload.get("user_content", ""),
+                        "session_id": session_id,
+                        "content": user_content,
                         "metadata": json.dumps({"role": "user"}),
-                    }).execute()
-                    self._client.table("hermes_memory").insert({
+                    }
+                    user_embedding = _maybe_embed(user_content)
+                    if user_embedding is not None:
+                        user_row["embedding"] = user_embedding
+
+                    assistant_row: Dict[str, Any] = {
                         "user_id": "default",
-                        "session_id": payload.get("session_id", ""),
-                        "content": payload.get("assistant_content", ""),
+                        "session_id": session_id,
+                        "content": assistant_content,
                         "metadata": json.dumps({"role": "assistant"}),
-                    }).execute()
+                    }
+                    assistant_embedding = _maybe_embed(assistant_content)
+                    if assistant_embedding is not None:
+                        assistant_row["embedding"] = assistant_embedding
+
+                    self._client.table("hermes_memory").insert(user_row).execute()
+                    self._client.table("hermes_memory").insert(assistant_row).execute()
 
                 elif op == "upsert_profile":
-                    self._client.table("hermes_users").upsert({
-                        "user_id": payload.get("user_id", "default"),
-                        "profile": json.dumps(payload.get("profile", {})),
-                    }).execute()
+                    user_id = payload.get("user_id", "default")
+                    profile = payload.get("profile", {})
+
+                    profile_row: Dict[str, Any] = {
+                        "user_id": user_id,
+                        "profile": json.dumps(profile),
+                    }
+                    profile_embedding = _maybe_embed(json.dumps(profile, sort_keys=True))
+                    if profile_embedding is not None:
+                        profile_row["embedding"] = profile_embedding
+
+                    self._client.table("hermes_users").upsert(profile_row).execute()
 
                 elif op == "upsert_session":
                     self._client.table("hermes_sessions").upsert({
