@@ -294,7 +294,11 @@ class OllamaEmbedder(EmbedProvider):
         request = Request(
             endpoint,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 HermesMemory/1.0",
+            },
             method="POST",
         )
         return _read_json_response(request, timeout_s=self.timeout_s)

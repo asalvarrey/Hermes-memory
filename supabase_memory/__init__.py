@@ -37,11 +37,18 @@ import os
 import sqlite3
 import time
 import threading
+import sys
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# Ensure vendored dependencies bundled with the plugin are importable even when
+# the Hermes runtime does not install supabase into the active environment.
+_VENDOR_DIR = Path(__file__).resolve().parents[1] / "vendor"
+if _VENDOR_DIR.exists() and str(_VENDOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_VENDOR_DIR))
 
 from agent.memory_provider import MemoryProvider
 from tools.registry import tool_error
@@ -761,7 +768,7 @@ class SupabaseMemoryProvider(MemoryProvider):
                 }
                 if structured:
                     upsert_payload["metadata"] = structured
-                self._client.table("hermes_sessions").upsert(upsert_payload).execute()
+                self._client.table("hermes_sessions").upsert(upsert_payload, on_conflict="session_id").execute()
             except Exception:
                 if self._cache:
                     queue_payload: Dict[str, Any] = {
@@ -1035,10 +1042,13 @@ class SupabaseMemoryProvider(MemoryProvider):
             # Try Supabase
             if self._online and self._client:
                 try:
-                    self._client.table("hermes_users").upsert({
-                        "user_id": user_id,
-                        "profile": json.dumps(profile_data),
-                    }).execute()
+                    self._client.table("hermes_users").upsert(
+                        {
+                            "user_id": user_id,
+                            "profile": json.dumps(profile_data),
+                        },
+                        on_conflict="user_id",
+                    ).execute()
                     return json.dumps({"status": "updated", "user_id": user_id, "source": "supabase"})
                 except Exception:
                     self._online = False
@@ -1347,13 +1357,13 @@ class SupabaseMemoryProvider(MemoryProvider):
                     if profile_embedding is not None:
                         profile_row["embedding"] = profile_embedding
 
-                    self._client.table("hermes_users").upsert(profile_row).execute()
+                    self._client.table("hermes_users").upsert(profile_row, on_conflict="user_id").execute()
 
                 elif op == "upsert_session":
                     self._client.table("hermes_sessions").upsert({
                         "session_id": payload.get("session_id", ""),
                         "summary": payload.get("summary", ""),
-                    }).execute()
+                    }, on_conflict="session_id").execute()
 
                 self._cache.remove_sync(sync["id"])
                 flushed += 1
