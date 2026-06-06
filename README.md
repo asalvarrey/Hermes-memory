@@ -29,28 +29,6 @@
 - **Safer conflict handling** — profile and session writes use explicit conflict targets so repeated writes stay idempotent in Supabase.
 - **Version sync** — the plugin manifest and runtime docs are aligned on the v1.2.1 release.
 
-## 🔔 What’s new in v1.2.0
-
-- **Dead-letter queue** — sync operations that fail 5+ times are moved to a local `dead_letter` table instead of retrying forever. `supabase_status` now reports the count.
-- **Real user identity** — `user_id` is no longer hardcoded as `"default"`. The plugin reads it from Hermes session kwargs, `HERMES_USER_ID` env var, or falls back to `"default"`.
-- **Enhanced Memory** (opt-in) — on session end, an LLM call produces a structured JSON summary (`topics`, `decisions`, `user_prefs`, `key_context`) stored in `hermes_sessions.metadata`. Disabled by default — costs tokens when active. See [Enhanced Memory](#-enhanced-memory-opt-in).
-
-## 🔔 What’s new in v1.1.1
-
-- **Patch release, same shape** — no schema or workflow changes; this bump is about stabilizing the already-merged Supabase memory path.
-- **Safer persistence writes** — profile/session sync now uses explicit conflict targets so the plugin can write cleanly in live Supabase projects.
-- **Loader resilience** — the plugin stays usable in stripped Hermes environments thanks to vendored dependencies and a minimal YAML fallback.
-- **Smoke-tested** — the release was verified with real read/write calls against Supabase before this note was added.
-
-## 🔔 What’s new in v1.1.0
-
-- **Vector memory, finally** — `sync_turn()` now writes embeddings when configured, and `prefetch()` / `supabase_search` can use `match_hermes_memory` for semantic retrieval.
-- **Provider-agnostic embeddings** — the plugin owns a local `EmbedProvider` abstraction, with OpenAI on day one and VoyageAI documented as the next supported provider.
-- **Safe fallback ladder** — if embeddings, the RPC, or the backend are unavailable, the plugin falls back to `ilike` and then local SQLite cache.
-- **Release note** — this README reflects the new version bump for the embedding/vector-search release branch.
-
----
-
 ### 🏷️ Tags
 
 `memory` · `supabase` · `pgvector` · `embeddings` · `semantic-search` · `fallback` · `hermes-agent`
@@ -333,6 +311,30 @@ print(f'Provider: {p.name}')
 print(f'Available: {p.is_available()}')
 "
 ```
+
+---
+
+Log of changes:
+
+## 🔔 What’s new in v1.2.0
+
+- **Dead-letter queue** — sync operations that fail 5+ times are moved to a local `dead_letter` table instead of retrying forever. `supabase_status` now reports the count.
+- **Real user identity** — `user_id` is no longer hardcoded as `"default"`. The plugin reads it from Hermes session kwargs, `HERMES_USER_ID` env var, or falls back to `"default"`.
+- **Enhanced Memory** (opt-in) — on session end, an LLM call produces a structured JSON summary (`topics`, `decisions`, `user_prefs`, `key_context`) stored in `hermes_sessions.metadata`. Disabled by default — costs tokens when active. See [Enhanced Memory](#-enhanced-memory-opt-in).
+
+## 🔔 What’s new in v1.1.1
+
+- **Patch release, same shape** — no schema or workflow changes; this bump is about stabilizing the already-merged Supabase memory path.
+- **Safer persistence writes** — profile/session sync now uses explicit conflict targets so the plugin can write cleanly in live Supabase projects.
+- **Loader resilience** — the plugin stays usable in stripped Hermes environments thanks to vendored dependencies and a minimal YAML fallback.
+- **Smoke-tested** — the release was verified with real read/write calls against Supabase before this note was added.
+
+## 🔔 What’s new in v1.1.0
+
+- **Vector memory, finally** — `sync_turn()` now writes embeddings when configured, and `prefetch()` / `supabase_search` can use `match_hermes_memory` for semantic retrieval.
+- **Provider-agnostic embeddings** — the plugin owns a local `EmbedProvider` abstraction, with OpenAI on day one and VoyageAI documented as the next supported provider.
+- **Safe fallback ladder** — if embeddings, the RPC, or the backend are unavailable, the plugin falls back to `ilike` and then local SQLite cache.
+- **Release note** — this README reflects the new version bump for the embedding/vector-search release branch.
 
 ---
 
