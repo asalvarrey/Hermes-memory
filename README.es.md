@@ -33,14 +33,6 @@
   `hermes_sessions.metadata`. Desactivado por defecto — consume tokens cuando está activo.
   Ver [Enhanced Memory](#-enhanced-memory-opt-in-1).
 
-## 🔔 Novedades en v1.1.0
-
-- **Memoria vectorial, por fin** — `sync_turn()` ahora escribe embeddings cuando está configurado, y `prefetch()` / `supabase_search` pueden usar `match_hermes_memory` para recuperación semántica.
-- **Embeddings agnósticos del proveedor** — el plugin trae una abstracción local `EmbedProvider`, con OpenAI en día uno y VoyageAI documentado como el siguiente soporte.
-- **Fallback seguro** — si fallan los embeddings, la RPC o el backend, el plugin cae a `ilike` y luego a la caché SQLite local.
-- **Nota de versión** — este README ya refleja el salto de versión para la rama de embeddings / búsqueda vectorial.
-
----
 
 ### 🏷️ Tags
 
