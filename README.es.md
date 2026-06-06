@@ -17,10 +17,21 @@
   <a href="#-instalación"><img src="https://img.shields.io/badge/install-2_pasos-success?style=flat-square" alt="Install"></a>
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donar-☕_Cafecito-FFDD00?style=flat-square" alt="Cafecito"></a>
-  <img src="https://img.shields.io/badge/version-v1.1.0-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.2.0-orange?style=flat-square" alt="Version">
 </p>
 
 ---
+
+## 🔔 Novedades en v1.2.0
+
+- **Cola de dead-letter** — los sync que fallan 5+ veces se archivan en una tabla `dead_letter`
+  local en lugar de reintentar para siempre. `supabase_status` ahora reporta el conteo.
+- **Identidad real de usuario** — `user_id` ya no está hardcodeado como `"default"`. El plugin
+  lo lee desde el contexto de sesión de Hermes, la variable `HERMES_USER_ID`, o usa `"default"`.
+- **Enhanced Memory** (opt-in) — al cerrar sesión, una llamada al LLM genera un resumen JSON
+  estructurado (`topics`, `decisions`, `user_prefs`, `key_context`) guardado en
+  `hermes_sessions.metadata`. Desactivado por defecto — consume tokens cuando está activo.
+  Ver [Enhanced Memory](#-enhanced-memory-opt-in-1).
 
 ## 🔔 Novedades en v1.1.0
 
@@ -73,6 +84,9 @@ En lugar de archivos locales que desaparecen si la VM muere, la memoria de tu ag
 | 8 | ⏱️ **Triggers de actualización** auto-updated_at en todas las tablas | ✅ |
 | 9 | 🧠 **Pipeline de embeddings** — `EmbedProvider` agnóstico con config local | ✅ |
 | 10 | 🧹 **Flush en cierre limpio** — los sync pendientes se vacían en `/new` y `/reset` | ✅ |
+| 11 | 📬 **Cola de dead-letter** — los syncs agotados se archivan, sin bucles de reintento | ✅ |
+| 12 | 🪪 **Identidad real de usuario** — `user_id` resuelto desde el contexto, no hardcodeado | ✅ |
+| 13 | 📝 **Enhanced Memory** — resúmenes de sesión con LLM, guardados como JSON estructurado | ✅ |
 
 ---
 
@@ -212,6 +226,59 @@ Usuario: "Hola, soy Antonov"
 |---|---|
 | `supabase_search` | Busca por palabra clave o similitud vectorial |
 | `supabase_profile` | Lee o actualiza preferencias del usuario |
+| `supabase_status` | Revisa el estado de la conexión y syncs pendientes |
+
+---
+
+## 📝 Enhanced Memory (opt-in)
+
+> ⚠️ **Esta feature consume tokens del LLM.** Cada sesión que cierra con `enhanced_memory`
+> activo genera una llamada adicional a `gpt-4o-mini`. El costo es mínimo (~$0.0002 por
+> sesión típica) pero se acumula con muchos usuarios o sesiones cortas frecuentes.
+
+Cuando está activo, el plugin llama a la API de OpenAI al cerrar cada sesión para producir
+un resumen JSON estructurado — guardado en `hermes_sessions.metadata` en Supabase. Sin
+dependencias nuevas: se reutiliza la misma API key del embedder, y la llamada HTTP usa
+`urllib` (solo stdlib).
+
+### ¿Cuándo usarlo?
+
+| Caso de uso | Recomendación |
+|---|---|
+| Asistente personal de largo plazo (ej. Asteria) | ✅ Sí — sesiones ricas se benefician del recall estructurado |
+| Agente de soporte con sesiones de 3–5 mensajes | ⚠️ Evalúa — el costo puede superar el valor |
+| Sesiones efímeras de investigación (ej. Diana) | ❌ No — sesiones cortas sin continuidad no necesitan resumen persistente |
+| Multi-usuario, cientos de sesiones por día | ❌ No sin monitorear costos primero |
+
+### Configuración
+
+```yaml
+# supabase_memory/plugin.yaml
+enhanced_memory:
+  enabled: true                   # false por defecto — opt-in explícito
+  max_messages_to_summarize: 20
+  summary_model: gpt-4o-mini
+  summary_fields:
+    - topics
+    - decisions
+    - user_prefs
+    - key_context
+```
+
+### Resultado
+
+Se guarda en `hermes_sessions.metadata` (JSONB):
+
+```json
+{
+  "topics": ["configuración de Supabase", "embeddings con pgvector"],
+  "decisions": ["usar text-embedding-3-small", "activar RLS en todas las tablas"],
+  "user_prefs": {"language": "es", "timezone": "America/Mexico_City"},
+  "key_context": ["usuario es desarrollador Python", "proyecto en producción desde v1.1.0"]
+}
+```
+
+Si la llamada al LLM falla por cualquier motivo, el plugin vuelve al resumen básico — el cierre nunca se bloquea.
 
 ---
 
@@ -255,7 +322,6 @@ print(f'Available: {p.is_available()}')
 
 - [ ] **Asistente `hermes memory setup`** — configuración interactiva con auto-migración
 - [ ] **Soporte multi-perfil** — memoria aislada por perfil de Hermes
-- [ ] **Auto-resumen de sesiones** — resúmenes generados por LLM
 - [ ] **Poda programada de memoria** — TTL para entradas viejas
 - [ ] **Demonio de sincronización de skills** — mirror automático entre instancias
 - [ ] **Soporte VoyageAI** — siguiente provider para la ruta Anthropic
