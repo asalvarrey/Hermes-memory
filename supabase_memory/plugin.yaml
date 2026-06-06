@@ -37,3 +37,13 @@ retrieval:
   vector_min_similarity: 0.75
   keyword_top_k: 20
   fallback_to_ilike: true
+
+enhanced_memory:
+  enabled: false                 # opt-in explícito — consume tokens del LLM
+  max_messages_to_summarize: 20
+  summary_model: gpt-4o-mini
+  summary_fields:
+    - topics
+    - decisions
+    - user_prefs
+    - key_context

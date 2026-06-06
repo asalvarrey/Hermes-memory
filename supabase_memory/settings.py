@@ -8,9 +8,9 @@ runtime details for embedding configuration.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     import yaml  # pyright: ignore[reportMissingModuleSource]
@@ -41,9 +41,20 @@ class RetrievalSettings:
 
 
 @dataclass
+class EnhancedMemorySettings:
+    enabled: bool = False
+    max_messages_to_summarize: int = 20
+    summary_model: str = "gpt-4o-mini"
+    summary_fields: List[str] = field(
+        default_factory=lambda: ["topics", "decisions", "user_prefs", "key_context"]
+    )
+
+
+@dataclass
 class PluginSettings:
     embedding: EmbeddingSettings
     retrieval: RetrievalSettings
+    enhanced_memory: EnhancedMemorySettings
     raw: Dict[str, Any]
 
 
@@ -134,6 +145,23 @@ def _read_retrieval_settings(raw: Dict[str, Any]) -> RetrievalSettings:
     )
 
 
+def _read_enhanced_memory_settings(raw: Dict[str, Any]) -> EnhancedMemorySettings:
+    sec = raw.get("enhanced_memory") or {}
+    if not isinstance(sec, dict):
+        sec = {}
+    raw_fields = sec.get("summary_fields")
+    if isinstance(raw_fields, list):
+        fields = [str(f) for f in raw_fields if f]
+    else:
+        fields = ["topics", "decisions", "user_prefs", "key_context"]
+    return EnhancedMemorySettings(
+        enabled=_coerce_bool(sec.get("enabled"), False),
+        max_messages_to_summarize=_coerce_int(sec.get("max_messages_to_summarize"), 20),
+        summary_model=str(sec.get("summary_model") or "gpt-4o-mini").strip(),
+        summary_fields=fields,
+    )
+
+
 def load_plugin_settings() -> PluginSettings:
     """Load and normalize plugin settings from plugin.yaml.
 
@@ -144,5 +172,6 @@ def load_plugin_settings() -> PluginSettings:
     return PluginSettings(
         embedding=_read_embedding_settings(raw),
         retrieval=_read_retrieval_settings(raw),
+        enhanced_memory=_read_enhanced_memory_settings(raw),
         raw=raw,
     )

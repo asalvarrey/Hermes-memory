@@ -37,6 +37,8 @@ import os
 import sqlite3
 import time
 import threading
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -54,7 +56,7 @@ from .embeddings import (
     EmbedUnavailableError,
     NullEmbedder,
 )
-from .settings import PluginSettings, load_plugin_settings
+from .settings import EnhancedMemorySettings, PluginSettings, load_plugin_settings
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +131,17 @@ class LocalCache:
                     CREATE TABLE IF NOT EXISTS metadata (
                         key   TEXT PRIMARY KEY,
                         value TEXT
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS dead_letter (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        operation   TEXT NOT NULL,
+                        payload     TEXT NOT NULL,
+                        created_at  REAL NOT NULL,
+                        failed_at   REAL NOT NULL,
+                        retries     INTEGER NOT NULL,
+                        last_error  TEXT
                     )
                 """)
                 conn.execute("""
@@ -272,6 +285,40 @@ class LocalCache:
             finally:
                 conn.close()
 
+    def move_to_dead_letter(self, sync: Dict[str, Any], last_error: str = "") -> None:
+        """Atomically move an exhausted pending_sync entry to dead_letter."""
+        with self._lock:
+            conn = sqlite3.connect(str(self._db_path))
+            try:
+                conn.execute(
+                    "INSERT INTO dead_letter "
+                    "(operation, payload, created_at, failed_at, retries, last_error) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        sync["operation"],
+                        json.dumps(sync["payload"]),
+                        sync["created_at"],
+                        time.time(),
+                        sync["retries"],
+                        last_error,
+                    ),
+                )
+                conn.execute("DELETE FROM pending_sync WHERE id = ?", (sync["id"],))
+                conn.commit()
+            finally:
+                conn.close()
+
+    def get_dead_letter_count(self) -> int:
+        """Return the number of entries in the dead_letter table."""
+        with self._lock:
+            conn = sqlite3.connect(str(self._db_path))
+            try:
+                cur = conn.execute("SELECT COUNT(*) FROM dead_letter")
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
+            finally:
+                conn.close()
+
     def get_metadata(self, key: str, default: str = "") -> str:
         """Read plugin metadata from local cache."""
         with self._lock:
@@ -388,6 +435,7 @@ class SupabaseMemoryProvider(MemoryProvider):
         self._cache: Optional[LocalCache] = None
         self._online: bool = False
         self._hermes_home: str = ""
+        self._user_id: str = "default"
 
         # Plugin-local settings and embedding configuration.
         self._settings: Optional[PluginSettings] = None
@@ -397,6 +445,7 @@ class SupabaseMemoryProvider(MemoryProvider):
         self._vector_min_similarity: float = 0.75
         self._keyword_top_k: int = 20
         self._fallback_to_ilike: bool = True
+        self._enhanced_memory: Optional[EnhancedMemorySettings] = None
 
     # -- Properties ----------------------------------------------------------
 
@@ -418,6 +467,7 @@ class SupabaseMemoryProvider(MemoryProvider):
         """Connect to Supabase, init local cache, flush pending syncs."""
         # Load plugin-local settings once per provider instance.
         self._settings = load_plugin_settings()
+        self._enhanced_memory = self._settings.enhanced_memory
 
         # Cache retrieval knobs locally for fast access on the hot path.
         self._vector_enabled = bool(self._settings.retrieval.vector_enabled)
@@ -450,6 +500,12 @@ class SupabaseMemoryProvider(MemoryProvider):
             self._key = key
 
         self._hermes_home = kwargs.get("hermes_home", "")
+        self._user_id = (
+            kwargs.get("user_id")
+            or kwargs.get("user_name")
+            or self._get_env("HERMES_USER_ID")
+            or "default"
+        )
         self._cache = LocalCache(self._hermes_home)
         self._session_id = session_id
 
@@ -537,7 +593,7 @@ class SupabaseMemoryProvider(MemoryProvider):
                         "query_embedding": query_vector,
                         "match_threshold": self._vector_min_similarity,
                         "match_count": self._vector_top_k,
-                        "filter_user_id": "default",
+                        "filter_user_id": self._user_id,
                         "filter_session_id": sid or None,
                     }
 
@@ -620,7 +676,7 @@ class SupabaseMemoryProvider(MemoryProvider):
 
         def _supabase_payload(role: str, content: str) -> Dict[str, Any]:
             payload: Dict[str, Any] = {
-                "user_id": "default",
+                "user_id": self._user_id,
                 "session_id": sid,
                 "content": content,
                 "metadata": json.dumps({"role": role}),
@@ -632,7 +688,7 @@ class SupabaseMemoryProvider(MemoryProvider):
 
         # Always write to local cache first
         if self._cache:
-            self._cache.store_turn("default", sid, user_content, assistant_content)
+            self._cache.store_turn(self._user_id, sid, user_content, assistant_content)
 
         # Also write to Supabase if online
         if self._online and self._client:
@@ -678,25 +734,169 @@ class SupabaseMemoryProvider(MemoryProvider):
     # -- Optional hooks ------------------------------------------------------
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
-        """Store session summary on exit."""
+        """Store session summary on exit.
+
+        When enhanced_memory is enabled, attempts a structured LLM summary first
+        and stores it in hermes_sessions.metadata. Falls back to basic summary on
+        any failure so shutdown is never blocked.
+        """
         if not self._cache:
             return
 
-        summary = f"Session {self._session_id}: {len(messages)} messages"
-        self._cache.set_metadata(f"session_{self._session_id}_summary", summary)
+        # -- Intentar resumen estructurado si está habilitado -----------------
+        structured: Optional[Dict[str, Any]] = None
+        if self._enhanced_memory and self._enhanced_memory.enabled:
+            structured = self._generate_structured_summary(messages)
+
+        # -- Resumen básico (siempre se genera como fallback) -----------------
+        basic_summary = f"Session {self._session_id}: {len(messages)} messages"
+        self._cache.set_metadata(f"session_{self._session_id}_summary", basic_summary)
 
         if self._online and self._client:
             try:
-                self._client.table("hermes_sessions").upsert({
+                upsert_payload: Dict[str, Any] = {
                     "session_id": self._session_id,
-                    "summary": summary,
-                }).execute()
+                    "user_id": self._user_id,
+                    "summary": basic_summary,
+                }
+                if structured:
+                    upsert_payload["metadata"] = structured
+                self._client.table("hermes_sessions").upsert(upsert_payload).execute()
             except Exception:
                 if self._cache:
-                    self._cache.queue_sync("upsert_session", {
+                    queue_payload: Dict[str, Any] = {
                         "session_id": self._session_id,
-                        "summary": summary,
-                    })
+                        "summary": basic_summary,
+                    }
+                    if structured:
+                        queue_payload["metadata"] = structured
+                    self._cache.queue_sync("upsert_session", queue_payload)
+
+    def _generate_structured_summary(
+        self,
+        messages: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Call the OpenAI chat completions API via urllib to produce a structured
+        JSON summary of the session.
+
+        Uses the same api_key_env as the embedder — no new dependencies beyond
+        what is already required for embeddings.
+        Returns None on any failure; caller falls back to basic summary.
+        """
+        if not self._enhanced_memory or not self._settings:
+            return None
+
+        # -- Resolver API key (mismo env que el embedder) ---------------------
+        api_key_env = self._settings.embedding.api_key_env or "OPENAI_API_KEY"
+        api_key = self._get_env(api_key_env) or self._get_env("OPENAI_API_KEY")
+        if not api_key:
+            logger.debug(
+                "SupabaseMemory: enhanced_memory skipped — no API key (%s)", api_key_env
+            )
+            return None
+
+        # -- Construir transcript (últimos N mensajes) -------------------------
+        max_msgs = self._enhanced_memory.max_messages_to_summarize
+        window = messages[-max_msgs:] if len(messages) > max_msgs else messages
+
+        transcript_lines: List[str] = []
+        for msg in window:
+            role = str(msg.get("role", "unknown")).upper()
+            content = str(msg.get("content", ""))[:800]
+            transcript_lines.append(f"{role}: {content}")
+        transcript = "\n".join(transcript_lines)
+
+        if not transcript.strip():
+            return None
+
+        # -- Construir prompt con los campos configurados ----------------------
+        field_hints: Dict[str, str] = {
+            "topics":      "list of strings — main topics discussed",
+            "decisions":   "list of strings — decisions or agreements reached",
+            "user_prefs":  "object — user preferences or facts learned (key-value pairs)",
+            "key_context": "list of strings — important context for future sessions",
+        }
+        fields = self._enhanced_memory.summary_fields
+        schema_lines = [
+            f'  "{f}": <{field_hints.get(f, "list of strings")}>'
+            for f in fields
+        ]
+        prompt = (
+            "Analyze this conversation and return ONLY a valid JSON object "
+            "with exactly these fields:\n"
+            "{\n" + "\n".join(schema_lines) + "\n}\n\n"
+            "Rules: no markdown, no explanation, no extra fields. Only the JSON.\n\n"
+            f"CONVERSATION:\n{transcript}"
+        )
+
+        # -- Llamada HTTP vía urllib (mismo patrón que OpenAIEmbedder) --------
+        endpoint = "https://api.openai.com/v1/chat/completions"
+        payload: Dict[str, Any] = {
+            "model": self._enhanced_memory.summary_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 512,
+            "response_format": {"type": "json_object"},
+        }
+        body = json.dumps(payload).encode("utf-8")
+        request = Request(
+            endpoint,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urlopen(request, timeout=30) as resp:
+                raw = resp.read().decode("utf-8")
+            result: Dict[str, Any] = json.loads(raw)
+        except HTTPError as exc:
+            details = ""
+            try:
+                details = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            logger.warning(
+                "SupabaseMemory: enhanced_memory HTTP %d — %s", exc.code, details[:200]
+            )
+            return None
+        except URLError as exc:
+            logger.warning("SupabaseMemory: enhanced_memory network error — %s", exc)
+            return None
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "SupabaseMemory: enhanced_memory invalid JSON response — %s", exc
+            )
+            return None
+        except Exception as exc:
+            logger.warning("SupabaseMemory: enhanced_memory failed — %s", exc)
+            return None
+
+        # -- Parsear y validar la respuesta -----------------------------------
+        try:
+            content = result["choices"][0]["message"]["content"]
+            structured = json.loads(content)
+            if not isinstance(structured, dict):
+                logger.warning("SupabaseMemory: enhanced_memory response is not a dict")
+                return None
+        except (KeyError, IndexError, json.JSONDecodeError) as exc:
+            logger.warning("SupabaseMemory: enhanced_memory parse failed — %s", exc)
+            return None
+
+        # -- Loguear uso de tokens si disponible ------------------------------
+        usage = result.get("usage", {})
+        if usage:
+            logger.info(
+                "SupabaseMemory: enhanced_memory — %d prompt + %d completion tokens (session %s)",
+                usage.get("prompt_tokens", 0),
+                usage.get("completion_tokens", 0),
+                self._session_id,
+            )
+
+        return structured
 
     # -- Tool handlers -------------------------------------------------------
 
@@ -754,7 +954,7 @@ class SupabaseMemoryProvider(MemoryProvider):
                         "query_embedding": query_vector,
                         "match_threshold": self._vector_min_similarity,
                         "match_count": limit,
-                        "filter_user_id": "default",
+                        "filter_user_id": self._user_id,
                         "filter_session_id": None,
                     }
                     result = self._client.rpc("match_hermes_memory", rpc_args).execute()
@@ -905,6 +1105,7 @@ class SupabaseMemoryProvider(MemoryProvider):
                 "supabase_connected": self._online,
                 "local_cache_available": self._cache is not None,
                 "pending_sync_count": len(pending_syncs),
+                "dead_letter_count": self._cache.get_dead_letter_count() if self._cache else 0,
                 "hermes_home": self._hermes_home,
                 "session_id": self._session_id,
                 "vector_enabled": self._vector_enabled,
@@ -967,7 +1168,7 @@ class SupabaseMemoryProvider(MemoryProvider):
             "query_embedding": query_vectors[0],
             "match_threshold": self._vector_min_similarity,
             "match_count": limit,
-            "filter_user_id": "default",
+            "filter_user_id": self._user_id,
             "filter_session_id": session_id or None,
         }
 
@@ -1068,11 +1269,8 @@ class SupabaseMemoryProvider(MemoryProvider):
     # -- Sync queue -----------------------------------------------------------
 
     def _flush_pending_syncs(self) -> None:
-        """Flush all pending sync operations to Supabase.
-
-        TODO: implement max_retries limit (e.g. 5) and dead-letter queue for
-        exhausted syncs.
-        """
+        """Flush all pending sync operations to Supabase."""
+        MAX_SYNC_RETRIES = 5
         if not self._cache or not self._client or not self._online:
             return
 
@@ -1097,6 +1295,14 @@ class SupabaseMemoryProvider(MemoryProvider):
             return None
 
         for sync in syncs:
+            if sync["retries"] >= MAX_SYNC_RETRIES:
+                self._cache.move_to_dead_letter(sync, last_error="max retries exceeded")
+                logger.warning(
+                    "SupabaseMemory: sync %d dead-lettered after %d retries (op=%s)",
+                    sync["id"], sync["retries"], sync["operation"],
+                )
+                continue
+
             try:
                 op = sync["operation"]
                 payload = sync["payload"]
@@ -1107,7 +1313,7 @@ class SupabaseMemoryProvider(MemoryProvider):
                     session_id = payload.get("session_id", "")
 
                     user_row: Dict[str, Any] = {
-                        "user_id": "default",
+                        "user_id": self._user_id,
                         "session_id": session_id,
                         "content": user_content,
                         "metadata": json.dumps({"role": "user"}),
@@ -1117,7 +1323,7 @@ class SupabaseMemoryProvider(MemoryProvider):
                         user_row["embedding"] = user_embedding
 
                     assistant_row: Dict[str, Any] = {
-                        "user_id": "default",
+                        "user_id": self._user_id,
                         "session_id": session_id,
                         "content": assistant_content,
                         "metadata": json.dumps({"role": "assistant"}),
