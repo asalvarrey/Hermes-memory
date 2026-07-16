@@ -33,8 +33,22 @@
   `hermes_sessions.metadata`. Desactivado por defecto — consume tokens cuando está activo.
   Ver [Enhanced Memory](#-enhanced-memory-opt-in-1).
 
+### 🛠️ Pase de mantenimiento actual
+
+Este repositorio recibió una mejora operativa pequeña, pero importante, para que el backend de
+Supabase sea más confiable y más fácil de depurar:
+
+- **Identidad del backend en el status** — `supabase_status` ahora expone el project ref de
+  Supabase, la ruta de la caché local, la edad de la cola y un resumen de salud del sync.
+- **Diagnóstico local-first** — el plugin guarda la identidad del backend en la caché local, así
+  que las sesiones offline siguen dejando una pista legible para auditar.
+- **Compatibilidad de embeddings** — los vectores se normalizan al tamaño esperado por el esquema
+  y las entradas de embedding se recortan con más cuidado para evitar payloads demasiado grandes.
+- **Alineación del esquema** — el manifest ahora documenta el objetivo real de embeddings
+  (`1536`) y el límite más corto de entrada (`2048` caracteres).
 
 ### 🏷️ Tags
+
 
 `memory` · `supabase` · `pgvector` · `embeddings` · `semantic-search` · `fallback` · `hermes-agent`
 

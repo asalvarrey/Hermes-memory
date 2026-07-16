@@ -28,6 +28,7 @@ class EmbeddingSettings:
     base_url: Optional[str] = None
     timeout_s: int = 30
     batch_size: int = 16
+    max_chars: int = 2048
     strict_dimension: bool = True
 
 
@@ -127,6 +128,7 @@ def _read_embedding_settings(raw: Dict[str, Any]) -> EmbeddingSettings:
         base_url=(str(base_url).strip() or None) if base_url is not None else None,
         timeout_s=_coerce_int(embedding.get("timeout_s"), 30),
         batch_size=_coerce_int(embedding.get("batch_size"), 16),
+        max_chars=_coerce_int(embedding.get("max_chars"), 2048),
         strict_dimension=_coerce_bool(embedding.get("strict_dimension"), True),
     )
 

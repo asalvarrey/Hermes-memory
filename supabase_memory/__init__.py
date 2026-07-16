@@ -39,6 +39,7 @@ import time
 import threading
 import sys
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,6 +102,11 @@ class LocalCache:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._init_db()
+
+    @property
+    def db_path(self) -> str:
+        """Return the absolute SQLite cache path as a string."""
+        return str(self._db_path)
 
     def _init_db(self) -> None:
         """Create tables if they don't exist."""
@@ -350,6 +356,28 @@ class LocalCache:
             finally:
                 conn.close()
 
+    def get_pending_sync_stats(self) -> Dict[str, Any]:
+        """Return queue size plus age diagnostics for observability."""
+        with self._lock:
+            conn = sqlite3.connect(str(self._db_path))
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*), MIN(created_at), MAX(created_at) FROM pending_sync"
+                ).fetchone()
+                count = int(row[0]) if row and row[0] is not None else 0
+                oldest = float(row[1]) if row and row[1] is not None else None
+                newest = float(row[2]) if row and row[2] is not None else None
+                now = time.time()
+                return {
+                    "count": count,
+                    "oldest_created_at": oldest,
+                    "newest_created_at": newest,
+                    "oldest_age_seconds": (now - oldest) if oldest is not None else None,
+                    "newest_age_seconds": (now - newest) if newest is not None else None,
+                }
+            finally:
+                conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Tool schemas exposed to the model
@@ -460,6 +488,29 @@ class SupabaseMemoryProvider(MemoryProvider):
     def name(self) -> str:
         return "supabase"
 
+    def _project_ref_from_url(self, url: str) -> str:
+        """Extract the Supabase project ref from a project URL when possible."""
+        try:
+            parsed = urlparse(url.strip())
+            host = parsed.netloc or parsed.path
+            if not host:
+                return ""
+            if host.endswith(".supabase.co"):
+                return host.split(".", 1)[0]
+            return host
+        except Exception:
+            return ""
+
+    def _backend_identity(self) -> Dict[str, Any]:
+        """Return a compact identity block for diagnostics and status output."""
+        project_ref = self._project_ref_from_url(self._url) if self._url else ""
+        return {
+            "url": self._url,
+            "project_ref": project_ref,
+            "database": "postgres",
+            "cache_db_path": self._cache.db_path if self._cache else "",
+        }
+
     # -- Core lifecycle ------------------------------------------------------
 
     def is_available(self) -> bool:
@@ -516,6 +567,11 @@ class SupabaseMemoryProvider(MemoryProvider):
         self._cache = LocalCache(self._hermes_home)
         self._session_id = session_id
 
+        if self._cache:
+            self._cache.set_metadata("supabase_url", self._url)
+            self._cache.set_metadata("supabase_project_ref", self._project_ref_from_url(self._url))
+            self._cache.set_metadata("supabase_database", "postgres")
+
         # Try connecting to Supabase
         try:
             if create_client is None:
@@ -551,8 +607,11 @@ class SupabaseMemoryProvider(MemoryProvider):
             syncs = self._cache.get_pending_syncs()
             if syncs:
                 pending = f" ({len(syncs)} pending syncs)"
+        identity = self._backend_identity()
+        project_ref = identity.get("project_ref") or "unknown"
         return (
-            f"You have persistent memory via Supabase ({status}{pending}). "
+            f"You have persistent memory via Supabase ({status}{pending}) "
+            f"on project {project_ref}. "
             "Use supabase_search to recall past conversations, supabase_profile "
             "to read or update user preferences, and supabase_status to check "
             "connection health. Memory works even offline via local cache."
@@ -1090,24 +1149,39 @@ class SupabaseMemoryProvider(MemoryProvider):
     def _handle_status(self, args: Dict[str, Any]) -> str:
         """Report connection status, pending syncs, and cache stats."""
         pending_syncs: List[Dict[str, Any]] = []
+        pending_stats: Dict[str, Any] = {"count": 0, "oldest_created_at": None, "newest_created_at": None,
+                                         "oldest_age_seconds": None, "newest_age_seconds": None}
         if self._cache:
             pending_syncs = self._cache.get_pending_syncs()
+            pending_stats = self._cache.get_pending_sync_stats()
 
         embedder_name = getattr(self._embedder, "name", "unknown")
         embedder_model = getattr(self._embedder, "model", None)
         embedder_dimension = getattr(self._embedder, "dimension", None)
+        backend_identity = self._backend_identity()
+        dead_letter_count = self._cache.get_dead_letter_count() if self._cache else 0
+        sync_health = (
+            "good"
+            if self._online and pending_stats["count"] == 0 and dead_letter_count == 0
+            else "partial"
+            if self._online and pending_stats["count"] == 0
+            else "offline"
+        )
 
         return json.dumps({
             "online": self._online,
             "source": "supabase_online" if self._online else "local_cache",
             "status": "🟢 All systems go" if self._online
                       else f"🟡 Offline — {len(pending_syncs)} pending syncs in queue",
+            "sync_health": sync_health,
             "pending_syncs": len(pending_syncs),
+            "queue": pending_stats,
+            "backend": backend_identity,
             "details": {
                 "supabase_connected": self._online,
                 "local_cache_available": self._cache is not None,
                 "pending_sync_count": len(pending_syncs),
-                "dead_letter_count": self._cache.get_dead_letter_count() if self._cache else 0,
+                "dead_letter_count": dead_letter_count,
                 "hermes_home": self._hermes_home,
                 "session_id": self._session_id,
                 "vector_enabled": self._vector_enabled,

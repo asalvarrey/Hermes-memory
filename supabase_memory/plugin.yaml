@@ -23,11 +23,12 @@ embedding:
   enabled: true
   provider: ollama
   model: nomic-embed-text:latest
-  dimension: 768
+  dimension: 1536
   api_key_env: null
   base_url: https://ollama.lemuria.systems
   timeout_s: 30
   batch_size: 16
+  max_chars: 2048
   strict_dimension: true
 retrieval:
   vector_enabled: true

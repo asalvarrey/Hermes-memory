@@ -139,10 +139,24 @@ def _validate_embedding_shape(
     for idx, vector in enumerate(vectors):
         vec = [float(v) for v in vector]
         if expected_dimension is not None and len(vec) != expected_dimension:
-            raise EmbedDimensionError(
-                f"{provider_name} returned vector #{idx} with dimension {len(vec)} "
-                f"but expected {expected_dimension}"
-            )
+            if len(vec) < expected_dimension:
+                logger.warning(
+                    "%s returned vector #%d with dimension %d; padding to %d for Supabase compatibility",
+                    provider_name,
+                    idx,
+                    len(vec),
+                    expected_dimension,
+                )
+                vec = vec + [0.0] * (expected_dimension - len(vec))
+            else:
+                logger.warning(
+                    "%s returned vector #%d with dimension %d; truncating to %d for Supabase compatibility",
+                    provider_name,
+                    idx,
+                    len(vec),
+                    expected_dimension,
+                )
+                vec = vec[:expected_dimension]
         normalized.append(vec)
     return normalized
 
@@ -190,7 +204,7 @@ class OpenAIEmbedder(EmbedProvider):
     base_url: Optional[str] = None
     dimension: int = 1536
     timeout_s: int = 30
-    max_chars: int = 8000
+    max_chars: int = 2048
     name: str = "openai"
     supports_batch: bool = True
     is_available: bool = True
@@ -277,7 +291,7 @@ class OllamaEmbedder(EmbedProvider):
     base_url: Optional[str] = None
     dimension: int = 1536
     timeout_s: int = 30
-    max_chars: int = 8000
+    max_chars: int = 2048
     name: str = "ollama"
     supports_batch: bool = True
     is_available: bool = True
@@ -389,6 +403,7 @@ class EmbedProviderFactory:
         dimension = embedding.get("dimension", 1536)
         base_url = embedding.get("base_url")
         timeout_s = int(embedding.get("timeout_s", 30))
+        max_chars = int(embedding.get("max_chars", 2048))
         api_key_env = str(embedding.get("api_key_env") or "").strip()
 
         if not enabled or not provider_name:
@@ -405,6 +420,7 @@ class EmbedProviderFactory:
                 base_url=base_url,
                 dimension=int(dimension),
                 timeout_s=timeout_s,
+                max_chars=max_chars,
             )
 
         if provider_name == "ollama":
@@ -415,6 +431,7 @@ class EmbedProviderFactory:
                 base_url=base_url,
                 dimension=int(dimension),
                 timeout_s=timeout_s,
+                max_chars=max_chars,
             )
 
         if provider_name == "voyageai":
