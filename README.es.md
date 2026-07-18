@@ -17,10 +17,21 @@
   <a href="#-instalación"><img src="https://img.shields.io/badge/install-2_pasos-success?style=flat-square" alt="Install"></a>
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donar-☕_Cafecito-FFDD00?style=flat-square" alt="Cafecito"></a>
-  <img src="https://img.shields.io/badge/version-v1.2.1-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.2.2-orange?style=flat-square" alt="Version">
 </p>
 
 ---
+
+## 🔔 Novedades en v1.2.2
+
+- **Chequeo de realidad del roadmap** — el README separa mejor lo que ya se entrega de lo que
+  sigue pendiente, para que la documentación publicada sí refleje el mantenimiento Supabase-first.
+- **Confianza local-first en la memoria** — el status, los punteros de identidad del backend y la
+  visibilidad de la cola dejan auditable lo que pasa incluso sin conexión.
+- **Alineación docs/esquema** — los manifests y la documentación ya coinciden en el objetivo real
+  de embeddings (`1536`) y en el límite de entrada (`2048` caracteres).
+- **Limpieza del changelog** — ahora el changelog describe el trabajo realmente entregado, no solo
+  la historia de proveedores de embeddings.
 
 ## 🔔 Novedades en v1.2.1
 
@@ -327,11 +338,30 @@ print(f'Available: {p.is_available()}')
 
 ## 🗺️ Hoja de Ruta
 
-- [ ] **Asistente `hermes memory setup`** — configuración interactiva con auto-migración
+- [x] **Asistente `hermes memory setup`** — configuración interactiva con auto-migración *(parcial: existe el setup base, falta el wizard UX completo)*
 - [ ] **Soporte multi-perfil** — memoria aislada por perfil de Hermes
 - [ ] **Poda programada de memoria** — TTL para entradas viejas
 - [ ] **Demonio de sincronización de skills** — mirror automático entre instancias
 - [ ] **Soporte VoyageAI** — siguiente provider para la ruta Anthropic
+
+### Lo que ya seguimos
+
+- **Hardening Supabase-first** — observabilidad, punteros de identidad y salud de cola ya están visibles.
+- **Compatibilidad de embeddings** — el repo quedó alineado a `1536` dimensiones y un límite de entrada menor.
+- **Documentación honesta** — el README ahora se parece más a lo que el plugin realmente hace.
+
+### Lo que sigue faltando
+
+- Un wizard real para guiado de instalación de punta a punta.
+- Aislamiento por perfil tanto en almacenamiento como en recuperación.
+- Una política de poda para memoria vieja y dead letters.
+- Un daemon de sync para skills si queremos paridad entre instancias.
+
+### Lo que yo mejoraría después
+
+- Hacer explícito si cada ítem está implementado, parcial o planeado.
+- Añadir un bloque corto de “Estado actual” arriba del README.
+- Separar mejor el trabajo futuro de proveedores del trabajo actual de Supabase.
 
 ---
 

@@ -14,13 +14,20 @@
 <p align="center">
   <a href="#-features"><img src="https://img.shields.io/badge/features-9_E2E_blue?style=flat-square" alt="Features"></a>
   <a href="#-installation"><img src="https://img.shields.io/badge/install-2_steps-green?style=flat-square" alt="Install"></a>
-  <img src="https://img.shields.io/badge/version-v1.2.1-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.2.2-orange?style=flat-square" alt="Version">
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://hermes-agent.nousresearch.com"><img src="https://img.shields.io/badge/for-Hermes_Agent-orange?style=flat-square" alt="Hermes"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donate-☕_Buy_me_a_coffee-FFDD00?style=flat-square" alt="Buy me a coffee"></a>
 </p>
 
 ---
+
+## 🔔 What’s new in v1.2.2
+
+- **Roadmap reality check** — the README now separates shipping work from future ideas, so published notes match the actual Supabase-first maintenance pass.
+- **Local-first memory trust** — status reporting, backend identity breadcrumbs, and queue visibility make offline sessions auditable.
+- **Schema/documentation alignment** — the manifests and docs now agree on the real embedding target (`1536`) and input cap (`2048` chars).
+- **Release-note cleanup** — the changelog now reflects the work we actually shipped instead of only the embedding provider story.
 
 ## 🔔 What’s new in v1.2.1
 
@@ -349,11 +356,30 @@ Log of changes:
 
 ## 🗺️ Roadmap
 
-- [ ] **`hermes memory setup` wizard** — interactive config with auto-migration
+- [x] **`hermes memory setup` wizard** — interactive config with auto-migration *(partial: core setup exists, wizard UX still pending)*
 - [ ] **Multi-profile support** — isolated memory per Hermes profile
 - [ ] **Cron-based memory pruning** — TTL for old entries
 - [ ] **Skills sync daemon** — automatically mirror skills across instances
 - [ ] **VoyageAI support** — next provider for the Anthropic route
+
+### What we already followed up on
+
+- **Supabase-first hardening** — observability, identity breadcrumbs, and queue health are now visible.
+- **Embedding compatibility** — the repo is aligned to `1536` dimensions and a shorter input cap.
+- **Docs reality pass** — the README now mirrors the shipped behavior more closely.
+
+### What is still missing
+
+- A real setup wizard that guides first-time installs end to end.
+- Profile isolation in both storage and retrieval paths.
+- A pruning policy for stale memory rows and dead letters.
+- A background sync daemon for skills, if we want cross-instance parity.
+
+### What I would improve next
+
+- Make roadmap items explicit about whether they are implemented, partial, or planned.
+- Add a short “Current status” block at the top of the README so the published state is obvious.
+- Split provider-agnostic future work from current Supabase maintenance so the README stays honest.
 
 ---
 
