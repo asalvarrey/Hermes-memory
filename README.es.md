@@ -17,12 +17,12 @@
   <a href="#-instalación"><img src="https://img.shields.io/badge/install-2_pasos-success?style=flat-square" alt="Install"></a>
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donar-☕_Cafecito-FFDD00?style=flat-square" alt="Cafecito"></a>
-  <img src="https://img.shields.io/badge/version-v1.2.0-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.2.1-orange?style=flat-square" alt="Version">
 </p>
 
 ---
 
-## 🔔 Novedades en v1.2.0
+## 🔔 Novedades en v1.2.1
 
 - **Cola de dead-letter** — los sync que fallan 5+ veces se archivan en una tabla `dead_letter`
   local en lugar de reintentar para siempre. `supabase_status` ahora reporta el conteo.
