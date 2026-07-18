@@ -24,14 +24,15 @@
 
 ## 🔔 Novedades en v1.2.1
 
-- **Cola de dead-letter** — los sync que fallan 5+ veces se archivan en una tabla `dead_letter`
-  local en lugar de reintentar para siempre. `supabase_status` ahora reporta el conteo.
-- **Identidad real de usuario** — `user_id` ya no está hardcodeado como `"default"`. El plugin
-  lo lee desde el contexto de sesión de Hermes, la variable `HERMES_USER_ID`, o usa `"default"`.
-- **Enhanced Memory** (opt-in) — al cerrar sesión, una llamada al LLM genera un resumen JSON
-  estructurado (`topics`, `decisions`, `user_prefs`, `key_context`) guardado en
-  `hermes_sessions.metadata`. Desactivado por defecto — consume tokens cuando está activo.
-  Ver [Enhanced Memory](#-enhanced-memory-opt-in-1).
+- **Diagnóstico de memoria local-first** — `supabase_status` ahora reporta el project ref de
+  Supabase, la ruta de la caché local, la edad de la cola y un resumen de salud del sync para que
+  el backend siga siendo legible incluso sin conexión.
+- **Punteros de identidad del backend** — el plugin guarda la identidad del backend en la caché
+  local, dejando una pista auditable para cada sesión sobre qué proyecto de Supabase la sostuvo.
+- **Compatibilidad de embeddings** — los vectores se normalizan al tamaño esperado por el esquema
+  y las entradas de embedding se recortan con más cuidado para evitar payloads demasiado grandes.
+- **Alineación del esquema** — los manifests y la documentación ahora reflejan el objetivo real de
+  embeddings (`1536`) y el límite más corto de entrada (`2048` caracteres).
 
 ### 🛠️ Pase de mantenimiento actual
 

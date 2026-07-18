@@ -24,10 +24,10 @@
 
 ## 🔔 What’s new in v1.2.1
 
-- **Ollama embeddings** — the embedding provider can now run against any Ollama-compatible endpoint. The plugin keeps the vector path on `pgvector` and uses `nomic-embed-text:latest` by default for 1536-dimension embeddings.
-- **Ollama enhanced memory** — structured session summaries now use the same local/remote Ollama pattern through `/api/chat`, so no OpenAI key is required for enhanced memory.
-- **Safer conflict handling** — profile and session writes use explicit conflict targets so repeated writes stay idempotent in Supabase.
-- **Version sync** — the plugin manifest and runtime docs are aligned on the v1.2.1 release.
+- **Local-first memory diagnostics** — `supabase_status` now reports the Supabase project ref, cache path, queue age, and sync-health summary so the backend is readable even offline.
+- **Backend identity breadcrumbs** — the plugin stores backend identity in the local cache, giving each session an auditable trail back to its Supabase project.
+- **Embedding compatibility** — vectors are normalized to the schema’s expected dimension, and oversized embedding inputs are truncated more conservatively.
+- **Schema alignment** — the manifests and runtime docs now document the real embedding target (`1536`) and the shorter input cap (`2048` chars).
 
 ### 🛠️ Current maintenance pass
 
