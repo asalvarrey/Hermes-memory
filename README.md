@@ -44,6 +44,7 @@ This repo now includes a small operational upgrade that makes the Supabase backe
 - **Local-first diagnostics** — the plugin stores backend identity in the local cache so offline sessions still have a readable trail.
 - **Embedding compatibility** — vectors are normalized to the schema’s expected dimension, and embedding inputs are truncated more conservatively to avoid oversized payloads.
 - **Schema alignment** — the manifest now documents the real embedding target (`1536`) and the shorter embedding input cap (`2048` chars).
+- **Operational rollout standard** — a documented health standard now exists for Supabase-backed memory so other agents can install the same watchdog, validate `dead_letter` growth, and re-run smoke tests after Hermes upgrades.
 
 ### 🏷️ Tags
 

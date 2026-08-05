@@ -58,6 +58,9 @@ Supabase sea más confiable y más fácil de depurar:
   y las entradas de embedding se recortan con más cuidado para evitar payloads demasiado grandes.
 - **Alineación del esquema** — el manifest ahora documenta el objetivo real de embeddings
   (`1536`) y el límite más corto de entrada (`2048` caracteres).
+- **Estándar de despliegue operativo** — ahora existe un estándar documentado de salud para
+  memoria respaldada por Supabase, de modo que otros agentes puedan instalar el mismo watchdog,
+  validar el crecimiento de `dead_letter` y volver a correr smoke tests después de upgrades de Hermes.
 
 ### 🏷️ Tags
 
