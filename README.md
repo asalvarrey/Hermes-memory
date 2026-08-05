@@ -14,7 +14,7 @@
 <p align="center">
   <a href="#-features"><img src="https://img.shields.io/badge/features-9_E2E_blue?style=flat-square" alt="Features"></a>
   <a href="#-installation"><img src="https://img.shields.io/badge/install-2_steps-green?style=flat-square" alt="Install"></a>
-  <img src="https://img.shields.io/badge/version-v1.2.2-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.2.3-orange?style=flat-square" alt="Version">
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://hermes-agent.nousresearch.com"><img src="https://img.shields.io/badge/for-Hermes_Agent-orange?style=flat-square" alt="Hermes"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donate-☕_Buy_me_a_coffee-FFDD00?style=flat-square" alt="Buy me a coffee"></a>
@@ -22,7 +22,7 @@
 
 ---
 
-## 🔔 What’s new in v1.2.2
+## 🔔 What’s new in v1.2.3
 
 - **Roadmap reality check** — the README now separates shipping work from future ideas, so published notes match the actual Supabase-first maintenance pass.
 - **Local-first memory trust** — status reporting, backend identity breadcrumbs, and queue visibility make offline sessions auditable.
@@ -45,6 +45,7 @@ This repo now includes a small operational upgrade that makes the Supabase backe
 - **Embedding compatibility** — vectors are normalized to the schema’s expected dimension, and embedding inputs are truncated more conservatively to avoid oversized payloads.
 - **Schema alignment** — the manifest now documents the real embedding target (`1536`) and the shorter embedding input cap (`2048` chars).
 - **Operational rollout standard** — a documented health standard now exists for Supabase-backed memory so other agents can install the same watchdog, validate `dead_letter` growth, and re-run smoke tests after Hermes upgrades.
+- **Installable bootstrap** — the repo now ships `scripts/install_memory_standard.py`, which copies the portable health/keepalive scripts into `HERMES_HOME` and recreates the matching cron jobs by name.
 
 ### 🏷️ Tags
 
@@ -157,7 +158,13 @@ hermes memory setup    # Interactive setup
 # or just start a new session — auto-detects config
 ```
 
----
+### Step 5: Install the operational standard
+
+```bash
+python scripts/install_memory_standard.py
+```
+
+This copies the portable health/keepalive scripts into your current `HERMES_HOME` and ensures the matching cron jobs exist by name.
 
 ## 🏗️ Architecture
 

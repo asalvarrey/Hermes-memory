@@ -17,12 +17,12 @@
   <a href="#-instalación"><img src="https://img.shields.io/badge/install-2_pasos-success?style=flat-square" alt="Install"></a>
   <a href="https://github.com/asalvarrey/Hermes-memory"><img src="https://img.shields.io/badge/license-MIT-purple?style=flat-square" alt="License"></a>
   <a href="https://buymeacoffee.com/asalvarrey"><img src="https://img.shields.io/badge/donar-☕_Cafecito-FFDD00?style=flat-square" alt="Cafecito"></a>
-  <img src="https://img.shields.io/badge/version-v1.2.2-orange?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-v1.2.3-orange?style=flat-square" alt="Version">
 </p>
 
 ---
 
-## 🔔 Novedades en v1.2.2
+## 🔔 Novedades en v1.2.3
 
 - **Chequeo de realidad del roadmap** — el README separa mejor lo que ya se entrega de lo que
   sigue pendiente, para que la documentación publicada sí refleje el mantenimiento Supabase-first.
@@ -61,6 +61,8 @@ Supabase sea más confiable y más fácil de depurar:
 - **Estándar de despliegue operativo** — ahora existe un estándar documentado de salud para
   memoria respaldada por Supabase, de modo que otros agentes puedan instalar el mismo watchdog,
   validar el crecimiento de `dead_letter` y volver a correr smoke tests después de upgrades de Hermes.
+- **Bootstrap instalable** — el repo ahora trae `scripts/install_memory_standard.py`, que copia los
+  scripts portables de salud/keepalive a `HERMES_HOME` y recrea los cron jobs equivalentes por nombre.
 
 ### 🏷️ Tags
 
@@ -173,6 +175,14 @@ memory:
 hermes memory setup    # Configuración interactiva
 # O simplemente inicia una nueva sesión — detecta la config automáticamente
 ```
+
+### Paso 5: Instala el estándar operativo
+
+```bash
+python scripts/install_memory_standard.py
+```
+
+Este comando copia los scripts portables de salud/keepalive a tu `HERMES_HOME` actual y asegura que existan los cron jobs equivalentes por nombre.
 
 ---
 
